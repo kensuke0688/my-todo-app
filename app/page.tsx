@@ -1,67 +1,214 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import type {
+  CreateTodoRequest,
+  CreateTodoResponse,
+  ListTodosResponse,
+  TodoDTO,
+} from "@/app/api/todos/route";
+import type {
+  UpdateTodoRequest,
+  UpdateTodoResponse,
+} from "@/app/api/todos/[id]/route";
+
+export default function HomePage() {
+  const router = useRouter();
+  const supabase = useMemo(() => createClient(), []);
+
+  const [email, setEmail] = useState<string | null>(null);
+  const [todos, setTodos] = useState<TodoDTO[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [title, setTitle] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
+
+  const loadTodos = useCallback(async () => {
+    const res = await fetch("/api/todos");
+    if (!res.ok) {
+      setError("TODO の取得に失敗しました");
+      return;
+    }
+    const data: ListTodosResponse = await res.json();
+    setTodos(data.todos);
+    setError(null);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function init() {
+      const { data } = await supabase.auth.getUser();
+      if (cancelled) return;
+      setEmail(data.user?.email ?? null);
+
+      await loadTodos();
+      if (cancelled) return;
+      setLoading(false);
+    }
+
+    void init();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, loadTodos]);
+
+  async function handleAdd(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const trimmed = title.trim();
+    if (!trimmed || adding) return;
+
+    setAdding(true);
+    setError(null);
+    try {
+      const body: CreateTodoRequest = { title: trimmed };
+      const res = await fetch("/api/todos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        setError("追加に失敗しました");
+        return;
+      }
+      const data: CreateTodoResponse = await res.json();
+      setTodos((prev) => [data.todo, ...prev]);
+      setTitle("");
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function handleToggle(todo: TodoDTO) {
+    setBusyId(todo.id);
+    setError(null);
+    try {
+      const body: UpdateTodoRequest = { isCompleted: !todo.isCompleted };
+      const res = await fetch(`/api/todos/${todo.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        setError("更新に失敗しました");
+        return;
+      }
+      const data: UpdateTodoResponse = await res.json();
+      setTodos((prev) =>
+        prev.map((t) => (t.id === data.todo.id ? data.todo : t)),
+      );
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    setBusyId(id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/todos/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        setError("削除に失敗しました");
+        return;
+      }
+      setTodos((prev) => prev.filter((t) => t.id !== id));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleSignOut() {
+    setSigningOut(true);
+    await supabase.auth.signOut();
+    router.replace("/login");
+    router.refresh();
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+    <div className="flex min-h-screen flex-col bg-zinc-950 text-zinc-100">
+      <header className="border-b border-zinc-800">
+        <div className="mx-auto flex w-full max-w-2xl flex-col gap-2 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-lg font-semibold">My TODO App</span>
+          <div className="flex items-center gap-3 text-sm">
+            <span className="truncate text-zinc-400">{email}</span>
+            <button
+              onClick={handleSignOut}
+              disabled={signingOut}
+              className="shrink-0 rounded-lg border border-zinc-700 px-3 py-1.5 font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+              {signingOut ? "ログアウト中..." : "ログアウト"}
+            </button>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
+      </header>
+
+      <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-8">
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-5 shadow-xl sm:p-6">
+          <form onSubmit={handleAdd} className="flex gap-2">
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="新しい TODO を入力"
+              className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500"
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            <button
+              type="submit"
+              disabled={adding || !title.trim()}
+              className="shrink-0 rounded-lg bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              追加
+            </button>
+          </form>
+
+          {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
+
+          <ul className="mt-5 space-y-2">
+            {loading ? (
+              <li className="py-6 text-center text-sm text-zinc-500">
+                読み込み中...
+              </li>
+            ) : todos.length === 0 ? (
+              <li className="py-6 text-center text-sm text-zinc-500">
+                TODO はまだありません
+              </li>
+            ) : (
+              todos.map((todo) => (
+                <li
+                  key={todo.id}
+                  className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2.5"
+                >
+                  <input
+                    type="checkbox"
+                    checked={todo.isCompleted}
+                    disabled={busyId === todo.id}
+                    onChange={() => handleToggle(todo)}
+                    className="size-4 shrink-0 accent-zinc-100"
+                  />
+                  <span
+                    className={`min-w-0 flex-1 break-words text-sm ${
+                      todo.isCompleted
+                        ? "text-zinc-500 line-through"
+                        : "text-zinc-100"
+                    }`}
+                  >
+                    {todo.title}
+                  </span>
+                  <button
+                    onClick={() => handleDelete(todo.id)}
+                    disabled={busyId === todo.id}
+                    className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-zinc-400 transition hover:bg-zinc-800 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    削除
+                  </button>
+                </li>
+              ))
+            )}
+          </ul>
         </div>
       </main>
     </div>
