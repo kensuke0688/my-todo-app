@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import type {
   CreateTodoRequest,
   CreateTodoResponse,
+  ErrorResponse,
   ListTodosResponse,
   TodoDTO,
 } from "@/app/api/todos/route";
@@ -13,6 +14,16 @@ import type {
   UpdateTodoRequest,
   UpdateTodoResponse,
 } from "@/app/api/todos/[id]/route";
+
+/** Pull the server's error message out of a failed response, with a fallback. */
+async function readError(res: Response, fallback: string): Promise<string> {
+  try {
+    const data: ErrorResponse = await res.json();
+    return data.error || fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 export default function HomePage() {
   const router = useRouter();
@@ -30,7 +41,7 @@ export default function HomePage() {
   const loadTodos = useCallback(async () => {
     const res = await fetch("/api/todos");
     if (!res.ok) {
-      setError("TODO の取得に失敗しました");
+      setError(await readError(res, "TODO の取得に失敗しました"));
       return;
     }
     const data: ListTodosResponse = await res.json();
@@ -72,7 +83,7 @@ export default function HomePage() {
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        setError("追加に失敗しました");
+        setError(await readError(res, "追加に失敗しました"));
         return;
       }
       const data: CreateTodoResponse = await res.json();
@@ -94,7 +105,7 @@ export default function HomePage() {
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        setError("更新に失敗しました");
+        setError(await readError(res, "更新に失敗しました"));
         return;
       }
       const data: UpdateTodoResponse = await res.json();
@@ -112,7 +123,7 @@ export default function HomePage() {
     try {
       const res = await fetch(`/api/todos/${id}`, { method: "DELETE" });
       if (!res.ok) {
-        setError("削除に失敗しました");
+        setError(await readError(res, "削除に失敗しました"));
         return;
       }
       setTodos((prev) => prev.filter((t) => t.id !== id));

@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/supabase/server";
-import type { ErrorResponse, TodoDTO } from "../route";
+import { toDTO, type ErrorResponse, type TodoDTO } from "../route";
+
+export const runtime = "nodejs";
 
 // PATCH /api/todos/[id]
 export type UpdateTodoRequest = { isCompleted: boolean };
@@ -11,6 +13,14 @@ export type UpdateTodoResponse = { todo: TodoDTO };
 export type DeleteTodoResponse = { success: true };
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+function serverError(where: string, err: unknown) {
+  console.error(`${where} failed:`, err);
+  return NextResponse.json<ErrorResponse>(
+    { error: err instanceof Error ? err.message : "Internal Server Error" },
+    { status: 500 },
+  );
+}
 
 export async function PATCH(request: Request, { params }: RouteContext) {
   const user = await getAuthUser();
@@ -40,31 +50,27 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     );
   }
 
-  // Scope the write to this user's rows so one user cannot touch another's todo.
-  const { count } = await prisma.todo.updateMany({
-    where: { id, userId: user.id },
-    data: { isCompleted: body.isCompleted },
-  });
+  try {
+    // Scope the write to this user's rows so one user cannot touch another's todo.
+    const { count } = await prisma.todo.updateMany({
+      where: { id, userId: user.id },
+      data: { isCompleted: body.isCompleted },
+    });
 
-  if (count === 0) {
-    return NextResponse.json<ErrorResponse>(
-      { error: "Todo not found" },
-      { status: 404 },
-    );
+    if (count === 0) {
+      return NextResponse.json<ErrorResponse>(
+        { error: "Todo not found" },
+        { status: 404 },
+      );
+    }
+
+    const todo = await prisma.todo.findFirstOrThrow({
+      where: { id, userId: user.id },
+    });
+    return NextResponse.json<UpdateTodoResponse>({ todo: toDTO(todo) });
+  } catch (err) {
+    return serverError(`PATCH /api/todos/${id}`, err);
   }
-
-  const todo = await prisma.todo.findFirstOrThrow({
-    where: { id, userId: user.id },
-  });
-
-  return NextResponse.json<UpdateTodoResponse>({
-    todo: {
-      id: todo.id,
-      title: todo.title,
-      isCompleted: todo.isCompleted,
-      createdAt: todo.createdAt.toISOString(),
-    },
-  });
 }
 
 export async function DELETE(_request: Request, { params }: RouteContext) {
@@ -78,16 +84,20 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
 
   const { id } = await params;
 
-  const { count } = await prisma.todo.deleteMany({
-    where: { id, userId: user.id },
-  });
+  try {
+    const { count } = await prisma.todo.deleteMany({
+      where: { id, userId: user.id },
+    });
 
-  if (count === 0) {
-    return NextResponse.json<ErrorResponse>(
-      { error: "Todo not found" },
-      { status: 404 },
-    );
+    if (count === 0) {
+      return NextResponse.json<ErrorResponse>(
+        { error: "Todo not found" },
+        { status: 404 },
+      );
+    }
+
+    return NextResponse.json<DeleteTodoResponse>({ success: true });
+  } catch (err) {
+    return serverError(`DELETE /api/todos/${id}`, err);
   }
-
-  return NextResponse.json<DeleteTodoResponse>({ success: true });
 }

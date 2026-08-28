@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAuthUser } from "@/lib/supabase/server";
 
+// pg (via Prisma's driver adapter) needs the Node.js runtime, not Edge.
+export const runtime = "nodejs";
+
 /** A todo as sent to the client (dates serialized to ISO strings). */
 export type TodoDTO = {
   id: string;
@@ -20,7 +23,7 @@ export type ListTodosResponse = { todos: TodoDTO[] };
 export type CreateTodoRequest = { title: string };
 export type CreateTodoResponse = { todo: TodoDTO };
 
-function toDTO(todo: {
+export function toDTO(todo: {
   id: string;
   title: string;
   isCompleted: boolean;
@@ -34,6 +37,14 @@ function toDTO(todo: {
   };
 }
 
+function serverError(where: string, err: unknown) {
+  console.error(`${where} failed:`, err);
+  return NextResponse.json<ErrorResponse>(
+    { error: err instanceof Error ? err.message : "Internal Server Error" },
+    { status: 500 },
+  );
+}
+
 export async function GET() {
   const user = await getAuthUser();
   if (!user) {
@@ -43,12 +54,15 @@ export async function GET() {
     );
   }
 
-  const todos = await prisma.todo.findMany({
-    where: { userId: user.id },
-    orderBy: { createdAt: "desc" },
-  });
-
-  return NextResponse.json<ListTodosResponse>({ todos: todos.map(toDTO) });
+  try {
+    const todos = await prisma.todo.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+    });
+    return NextResponse.json<ListTodosResponse>({ todos: todos.map(toDTO) });
+  } catch (err) {
+    return serverError("GET /api/todos", err);
+  }
 }
 
 export async function POST(request: Request) {
@@ -78,12 +92,15 @@ export async function POST(request: Request) {
     );
   }
 
-  const todo = await prisma.todo.create({
-    data: { title, userId: user.id },
-  });
-
-  return NextResponse.json<CreateTodoResponse>(
-    { todo: toDTO(todo) },
-    { status: 201 },
-  );
+  try {
+    const todo = await prisma.todo.create({
+      data: { title, userId: user.id },
+    });
+    return NextResponse.json<CreateTodoResponse>(
+      { todo: toDTO(todo) },
+      { status: 201 },
+    );
+  } catch (err) {
+    return serverError("POST /api/todos", err);
+  }
 }
